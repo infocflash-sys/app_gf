@@ -1,0 +1,9 @@
+# APKs y builds de distribución (pesan mucho, no van al repo)
+/dist/
+
+# IDE
+.idea/
+*.iml
+
+# Android Studio / Flutter build artifacts a nivel raíz por las dudas
+/build/
