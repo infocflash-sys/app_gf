@@ -15,6 +15,7 @@ class Brand {
 class StatusColors {
   static const entregado = Color(0xFF22A06B);
   static const novedad = Color(0xFFE5484D);
+  static const enRecorrido = Color(0xFFF97316); // naranja: piezas con recorrido abierto ahora mismo
 
   // Regla de negocio: estado definitivo = azul; cualquier otro = verde (en gestión).
   static const definitivoLight = Color(0xFF2A62E8);

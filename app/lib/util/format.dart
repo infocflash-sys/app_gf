@@ -9,6 +9,8 @@ String fmtDate(DateTime d) => '${_two(d.day)}/${_two(d.month)}/${_two(d.year % 1
 String fmtDateTime(DateTime d) =>
     '${d.day} ${_meses[d.month - 1]} · ${_two(d.hour)}:${_two(d.minute)} hs';
 
+String fmtTime(DateTime d) => '${_two(d.hour)}:${_two(d.minute)}:${_two(d.second)}';
+
 /// "hace 12 min", "hace 3 h", "ayer", "hace 5 días".
 String fmtAgo(DateTime d) {
   final diff = DateTime.now().difference(d);

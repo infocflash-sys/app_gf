@@ -44,6 +44,7 @@ class _PieceDetailScreenState extends State<PieceDetailScreen> {
   PieceDetail? _detail;
   String? _error;
   late bool _mapOpen = widget.initialMapOpen;
+  LiveTracking? _live;
 
   @override
   void initState() {
@@ -61,7 +62,16 @@ class _PieceDetailScreenState extends State<PieceDetailScreen> {
   /// para no consultar dos veces, y se vuelve a abrir al regresar.
   Future<void> _expandMap() async {
     setState(() => _mapOpen = false);
-    await Navigator.of(context).push(fadeRoute(LiveTrackingScreen(pieceId: widget.piece.id), ms: 280));
+    final d = _detail;
+    await Navigator.of(context).push(fadeRoute(
+      LiveTrackingScreen(
+        pieceId: widget.piece.id,
+        tracking: d?.piece.tracking ?? widget.piece.tracking,
+        destinatario: d?.piece.destinatario ?? widget.piece.destinatario,
+        domicilio: d?.domicilio,
+      ),
+      ms: 280,
+    ));
     if (mounted) setState(() => _mapOpen = true);
   }
 
@@ -93,6 +103,7 @@ class _PieceDetailScreenState extends State<PieceDetailScreen> {
             enVivo: d?.piece.enVivo ?? p.enVivo,
             mapOpen: _mapOpen,
             onToggleMap: _toggleMap,
+            inicioRecorrido: _live?.inicioRecorrido,
           ),
         ),
         SliverPadding(
@@ -128,7 +139,15 @@ class _PieceDetailScreenState extends State<PieceDetailScreen> {
                       child: (_mapOpen && d.piece.enVivo)
                           ? Padding(
                               padding: const EdgeInsets.only(bottom: 24),
-                              child: LiveTrackingPanel(fetch: () => portal.tracking(p.id), onExpand: _expandMap),
+                              child: LiveTrackingPanel(
+                                fetch: () => portal.tracking(p.id),
+                                onExpand: _expandMap,
+                                onUpdate: (lt) => setState(() => _live = lt),
+                                pieceId: d.piece.id,
+                                tracking: d.piece.tracking,
+                                destinatario: d.piece.destinatario,
+                                domicilio: d.domicilio,
+                              ),
                             )
                           : const SizedBox(width: double.infinity),
                     ),
@@ -229,11 +248,20 @@ class _TopBar extends StatelessWidget {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.piece, required this.enVivo, required this.mapOpen, required this.onToggleMap});
+  const _Header({
+    required this.piece,
+    required this.enVivo,
+    required this.mapOpen,
+    required this.onToggleMap,
+    this.inicioRecorrido,
+  });
   final Piece piece;
   final bool enVivo;
   final bool mapOpen;
   final VoidCallback onToggleMap;
+
+  /// Primer punto GPS de hoy del cartero: cuándo salió "a la calle" con este recorrido.
+  final DateTime? inicioRecorrido;
 
   @override
   Widget build(BuildContext context) {
@@ -285,6 +313,9 @@ class _Header extends StatelessWidget {
                   if (piece.estado.isNotEmpty) StatusChip(label: piece.estado, definitivo: piece.definitivo),
                   if (piece.actualizado != null)
                     Text('Act. ${fmtAgo(piece.actualizado!)}',
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12.5)),
+                  if (inicioRecorrido != null)
+                    Text('Inicio de Recorrido a las ${fmtTime(inicioRecorrido!)}',
                         style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12.5)),
                 ]),
               ]),

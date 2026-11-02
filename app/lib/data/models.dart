@@ -72,16 +72,26 @@ class Piece {
 }
 
 class Resumen {
-  const Resumen({required this.total, required this.enGestion, required this.finalizadas, required this.dias});
+  const Resumen({
+    required this.total,
+    required this.enGestion,
+    required this.finalizadas,
+    required this.enRecorrido,
+    required this.dias,
+  });
   final int total;
   final int enGestion;
   final int finalizadas;
+
+  /// Piezas "En distribución" con recorrido abierto ahora mismo (listas para el mapa en vivo).
+  final int enRecorrido;
   final int dias;
 
   factory Resumen.fromJson(Map<String, dynamic> j) => Resumen(
         total: j['total'] as int,
         enGestion: j['enGestion'] as int,
         finalizadas: j['finalizadas'] as int,
+        enRecorrido: (j['enRecorrido'] as num?)?.toInt() ?? 0,
         dias: j['dias'] as int,
       );
 }
@@ -163,7 +173,14 @@ class VehiclePosition {
 
 /// Seguimiento en tiempo real de una pieza (recorrido abierto).
 class LiveTracking {
-  const LiveTracking({required this.activo, this.recorrido, this.tipo, this.destino, this.vehiculo});
+  const LiveTracking({
+    required this.activo,
+    this.recorrido,
+    this.tipo,
+    this.destino,
+    this.vehiculo,
+    this.inicioRecorrido,
+  });
   final bool activo;
   final int? recorrido;
 
@@ -171,6 +188,9 @@ class LiveTracking {
   final String? tipo;
   final LatLng? destino;
   final VehiclePosition? vehiculo;
+
+  /// Primer punto GPS del cartero hoy (hora en que salió "a la calle" con este recorrido).
+  final DateTime? inicioRecorrido;
 
   bool get esRetiro => tipo == 'RETIRO';
 
@@ -189,6 +209,7 @@ class LiveTracking {
               sinSenal: v['sinSenal'] == true,
             )
           : null,
+      inicioRecorrido: _date(j['inicioRecorrido']),
     );
   }
 }

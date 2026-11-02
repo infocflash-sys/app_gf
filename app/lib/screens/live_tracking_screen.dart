@@ -7,15 +7,31 @@ import '../widgets/live_tracking_panel.dart';
 /// Mapa "Sigue en tiempo real" a pantalla completa. El botón de arriba a la izquierda
 /// (o el "atrás" del teléfono) vuelve al detalle de la pieza.
 class LiveTrackingScreen extends StatelessWidget {
-  const LiveTrackingScreen({super.key, required this.pieceId});
+  const LiveTrackingScreen({
+    super.key,
+    required this.pieceId,
+    this.tracking,
+    this.destinatario,
+    this.domicilio,
+  });
   final int pieceId;
+  final String? tracking;
+  final String? destinatario;
+  final String? domicilio;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(children: [
         Positioned.fill(
-          child: LiveTrackingPanel(fullScreen: true, fetch: () => portal.tracking(pieceId)),
+          child: LiveTrackingPanel(
+            fullScreen: true,
+            fetch: () => portal.tracking(pieceId),
+            pieceId: pieceId,
+            tracking: tracking,
+            destinatario: destinatario,
+            domicilio: domicilio,
+          ),
         ),
         SafeArea(
           child: Padding(

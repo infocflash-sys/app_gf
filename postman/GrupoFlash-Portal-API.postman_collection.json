@@ -1,0 +1,208 @@
+{
+  "info": {
+    "name": "Portal Clientes Grupo Flash - API",
+    "description": "Colección para probar api_php (y api/ Node, cambiando baseUrl) del Portal Clientes Grupo Flash.\n\nFlujo sugerido:\n1. Completá las variables de colección usuario/clave (pestaña Variables) con una cuenta de prueba.\n2. Corré \"Auth > Login\": guarda accessToken y refreshToken automáticamente.\n3. Corré cualquier otro request: ya usan {{accessToken}} solos.\n4. Si el access token vence, corré \"Auth > Refresh\".",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// El hosting bloquea requests sin cara de navegador (ModSecurity devuelve 406 con el User-Agent por defecto).",
+          "pm.request.headers.upsert({ key: 'User-Agent', value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36' });",
+          "pm.request.headers.upsert({ key: 'Accept', value: 'application/json' });"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "https://appgfapi.misenviosapp.com.ar", "type": "string" },
+    { "key": "usuario", "value": "", "type": "string" },
+    { "key": "clave", "value": "", "type": "string" },
+    { "key": "accessToken", "value": "", "type": "string" },
+    { "key": "refreshToken", "value": "", "type": "string" },
+    { "key": "pieceId", "value": "", "type": "string", "description": "Id de una pieza propia (flash_piezas.id) para probar /piezas/:id, pdf, eventos y seguimiento" },
+    { "key": "eventId", "value": "", "type": "string", "description": "Id de un evento de la pieza (de la lista 'eventos' del detalle) con foto o firma" }
+  ],
+  "item": [
+    {
+      "name": "Salud",
+      "item": [
+        {
+          "name": "Health check (toca la DB)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set('accessToken', body.accessToken);",
+                  "    pm.collectionVariables.set('refreshToken', body.refreshToken);",
+                  "    pm.test('guardó accessToken y refreshToken', () => {",
+                  "        pm.expect(body.accessToken).to.be.a('string');",
+                  "        pm.expect(body.refreshToken).to.be.a('string');",
+                  "    });",
+                  "} else {",
+                  "    pm.test('login falló: ' + pm.response.code, () => { throw new Error(pm.response.text()); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"usuario\": \"{{usuario}}\",\n  \"clave\": \"{{clave}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Refresh",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set('accessToken', body.accessToken);",
+                  "    pm.collectionVariables.set('refreshToken', body.refreshToken);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "refresh"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Me (perfil / valida sesión activa)",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Piezas",
+      "item": [
+        {
+          "name": "Listar piezas",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/piezas?dias=30&page=1&size=30",
+              "host": ["{{baseUrl}}"],
+              "path": ["piezas"],
+              "query": [
+                { "key": "dias", "value": "30" },
+                { "key": "page", "value": "1" },
+                { "key": "size", "value": "30" },
+                { "key": "q", "value": "", "disabled": true, "description": "buscador universal: id, barcode, remito, destinatario, domicilio, localidad" },
+                { "key": "grupo", "value": "", "disabled": true, "description": "'gestion' o 'finalizadas'" }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Detalle de pieza",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/piezas/{{pieceId}}", "host": ["{{baseUrl}}"], "path": ["piezas", "{{pieceId}}"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Foto de evento (thumb)",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/piezas/{{pieceId}}/eventos/{{eventId}}/foto?size=thumb",
+              "host": ["{{baseUrl}}"],
+              "path": ["piezas", "{{pieceId}}", "eventos", "{{eventId}}", "foto"],
+              "query": [{ "key": "size", "value": "thumb", "description": "'thumb' o 'full'" }]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Firma de evento",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/piezas/{{pieceId}}/eventos/{{eventId}}/firma?size=full",
+              "host": ["{{baseUrl}}"],
+              "path": ["piezas", "{{pieceId}}", "eventos", "{{eventId}}", "firma"],
+              "query": [{ "key": "size", "value": "full" }]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "PDF de la pieza",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/piezas/{{pieceId}}/pdf", "host": ["{{baseUrl}}"], "path": ["piezas", "{{pieceId}}", "pdf"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Seguimiento en vivo",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/piezas/{{pieceId}}/seguimiento", "host": ["{{baseUrl}}"], "path": ["piezas", "{{pieceId}}", "seguimiento"] }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

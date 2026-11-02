@@ -128,7 +128,7 @@ class SettingsScreen extends StatelessWidget {
             child: Column(children: [
               const BrandLogo(size: 30, light: false),
               const SizedBox(height: 6),
-              Text('Portal Clientes · v0.2',
+              Text('Portal Flash Clientes · v0.2',
                   style: TextStyle(color: cs.onSurface.withValues(alpha: 0.5), fontSize: 12)),
             ]),
           ),

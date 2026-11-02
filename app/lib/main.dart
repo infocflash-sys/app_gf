@@ -30,7 +30,7 @@ class GrupoFlashApp extends StatelessWidget {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: themeController,
       builder: (_, mode, _) => MaterialApp(
-        title: 'Grupo Flash · Portal Clientes',
+        title: 'Portal Flash Clientes',
         navigatorKey: navigatorKey,
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light(),

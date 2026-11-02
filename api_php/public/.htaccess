@@ -1,0 +1,20 @@
+RewriteEngine On
+
+# Apache/PHP-FPM (FastCGI) no reenvía el header Authorization a PHP por defecto: hay que
+# copiarlo a una variable de entorno que sí llega como $_SERVER['HTTP_AUTHORIZATION'].
+RewriteCond %{HTTP:Authorization} ^(.*)
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
+
+# No reescribir si el archivo/carpeta pedido existe de verdad (por si se sirve algo estático)
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+
+# Todo lo demás entra por el front controller; el path original viaja en __route (no se usa
+# PATH_INFO porque con PHP-FPM detrás de Apache/FastCGI no siempre llega de forma confiable).
+RewriteRule ^(.*)$ index.php?__route=$1 [L,QSA]
+
+<IfModule mod_headers.c>
+    Header unset X-Powered-By
+</IfModule>
+
+Options -Indexes

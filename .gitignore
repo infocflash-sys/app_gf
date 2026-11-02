@@ -7,3 +7,8 @@
 
 # Android Studio / Flutter build artifacts a nivel raíz por las dudas
 /build/
+
+/notas/
+/notas/*
+/notas*
+notas*

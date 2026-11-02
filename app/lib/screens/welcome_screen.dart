@@ -64,7 +64,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProvider
                   child: const Row(mainAxisSize: MainAxisSize.min, children: [
                     Icon(LucideIcons.radio, size: 14, color: Brand.accent),
                     SizedBox(width: 8),
-                    Text('Portal Clientes',
+                    Text('Portal Flash Clientes',
                         style: TextStyle(
                             color: Colors.white70,
                             fontSize: 12.5,

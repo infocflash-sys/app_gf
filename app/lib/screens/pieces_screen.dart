@@ -32,6 +32,7 @@ class _PiecesScreenState extends State<PiecesScreen> {
   String _q = '';
   bool _enCurso = true; // verde: sigue en gestión
   bool _gestionado = true; // azul: estado definitivo
+  bool _enRecorrido = false; // naranja: recorrido abierto ahora mismo, listas para el mapa en vivo
   final _searchCtl = TextEditingController();
   int _dias = 30;
   bool _grid = false;
@@ -86,8 +87,12 @@ class _PiecesScreenState extends State<PiecesScreen> {
     }
   }
 
-  /// Ambos activos = todas. Uno solo = ese grupo. Siempre queda al menos uno activo.
-  String? get _grupo => _enCurso == _gestionado ? null : (_enCurso ? 'gestion' : 'finalizadas');
+  /// "En recorrido" manda sola (es un filtro rápido que pisa a los otros dos).
+  /// Si no está activa: ambos activos = todas; uno solo = ese grupo; siempre queda al menos uno activo.
+  String? get _grupo {
+    if (_enRecorrido) return 'en_recorrido';
+    return _enCurso == _gestionado ? null : (_enCurso ? 'gestion' : 'finalizadas');
+  }
 
   void _toggle({required bool gestionado}) {
     final en = gestionado ? _enCurso : !_enCurso;
@@ -96,7 +101,13 @@ class _PiecesScreenState extends State<PiecesScreen> {
     setState(() {
       _enCurso = en;
       _gestionado = ge;
+      _enRecorrido = false;
     });
+    _load(reset: true);
+  }
+
+  void _toggleEnRecorrido() {
+    setState(() => _enRecorrido = !_enRecorrido);
     _load(reset: true);
   }
 
@@ -220,19 +231,30 @@ class _PiecesScreenState extends State<PiecesScreen> {
             icon: LucideIcons.loader,
             count: r?.enGestion,
             color: StatusColors.of(context, definitivo: false),
-            active: _enCurso,
+            active: _enCurso && !_enRecorrido,
             onTap: () => _toggle(gestionado: false),
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 8),
         Expanded(
           child: _StateToggle(
             label: 'Gestionado',
             icon: LucideIcons.circleCheck,
             count: r?.finalizadas,
             color: StatusColors.of(context, definitivo: true),
-            active: _gestionado,
+            active: _gestionado && !_enRecorrido,
             onTap: () => _toggle(gestionado: true),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _StateToggle(
+            label: 'En Recorrido',
+            icon: LucideIcons.truck,
+            count: r?.enRecorrido,
+            color: StatusColors.enRecorrido,
+            active: _enRecorrido,
+            onTap: _toggleEnRecorrido,
           ),
         ),
       ]),
@@ -355,20 +377,23 @@ class _StateToggle extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
           child: Row(children: [
-            Icon(icon, size: 20, color: fg),
-            const SizedBox(width: 10),
+            Icon(icon, size: 18, color: fg),
+            const SizedBox(width: 8),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(label, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: fg)),
+                Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5, color: fg)),
                 const SizedBox(height: 2),
                 count == null
                     ? Text('—', style: TextStyle(fontSize: 12.5, color: fg))
                     : TweenAnimationBuilder<int>(
                         tween: IntTween(begin: 0, end: count!),
                         duration: const Duration(milliseconds: 600),
-                        builder: (_, v, _) => Text(' ',
+                        builder: (_, v, _) => Text('$v',
                             style: TextStyle(fontSize: 12.5, color: fg.withValues(alpha: 0.85))),
                       ),
               ]),

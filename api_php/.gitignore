@@ -1,0 +1,6 @@
+vendor/
+.env
+cache/*
+!cache/.gitkeep
+.phpunit.result.cache
+*.zip

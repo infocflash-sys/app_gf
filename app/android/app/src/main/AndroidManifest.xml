@@ -3,7 +3,7 @@
     <!-- allowBackup=false: al reinstalar la app NO se recupera la sesión (hay que loguearse de nuevo).
          usesCleartextTraffic=true solo para desarrollo con la API por http; en producción la API va por https y se quita. -->
     <application
-        android:label="Grupo Flash"
+        android:label="Portal Flash Clientes"
         android:name="${applicationName}"
         android:enableOnBackInvokedCallback="true"
         android:allowBackup="false"

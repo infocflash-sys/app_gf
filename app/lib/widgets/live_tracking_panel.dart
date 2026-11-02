@@ -10,6 +10,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../data/models.dart';
 import '../data/portal_api.dart';
 import '../theme/app_theme.dart';
+import '../util/format.dart';
 
 /// "Sigue en tiempo real": mapa con el móvil que lleva la pieza y el punto de entrega,
 /// al estilo de las apps de delivery. Se actualiza solo mientras está abierto.
@@ -22,6 +23,11 @@ class LiveTrackingPanel extends StatefulWidget {
     this.height = 400,
     this.fullScreen = false,
     this.onExpand,
+    this.onUpdate,
+    this.pieceId,
+    this.tracking,
+    this.destinatario,
+    this.domicilio,
   });
 
   final Future<LiveTracking> Function() fetch;
@@ -38,6 +44,15 @@ class LiveTrackingPanel extends StatefulWidget {
 
   /// Si se informa, aparece el botón para abrir el mapa a pantalla completa.
   final VoidCallback? onExpand;
+
+  /// Se llama con cada actualización recibida (por ejemplo, para mostrar "Inicio de recorrido" afuera del mapa).
+  final ValueChanged<LiveTracking>? onUpdate;
+
+  // Datos fijos de la pieza (no cambian entre sondeos), para los popups al tocar los íconos.
+  final int? pieceId;
+  final String? tracking;
+  final String? destinatario;
+  final String? domicilio;
 
   @override
   State<LiveTrackingPanel> createState() => _LiveTrackingPanelState();
@@ -108,6 +123,7 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
     try {
       final d = await widget.fetch();
       if (!mounted || gen != _gen) return;
+      final prevFecha = _data?.vehiculo?.fecha;
       setState(() {
         _error = null;
         final nv = d.vehiculo?.point;
@@ -127,22 +143,33 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
           if (metros > 5) _heading = _geo.bearing(_to!, nv) * math.pi / 180; // hacia dónde avanza
           _from = _vehicle; // arranca desde donde se está dibujando ahora
           _to = nv;
-          // Entre una lectura GPS y la siguiente el camión se desliza de forma continua (dura lo mismo
-          // que el intervalo de actualización). Si el salto es enorme, se traslada rápido.
-          _anim.duration = metros > 1500
-              ? const Duration(milliseconds: 500)
-              : Duration(milliseconds: (widget.interval.inMilliseconds * 0.95).round());
+          _anim.duration = _driftDuration(metros, prevFecha, d.vehiculo?.fecha);
           _anim.forward(from: 0);
           _trail.add(nv);
           if (_trail.length > 40) _trail.removeAt(0);
         }
         _data = d;
       });
+      widget.onUpdate?.call(d);
       if (!d.activo) _timer?.cancel(); // el recorrido terminó: se deja de consultar
       if (_follow) _fitAll();
     } on ApiException catch (e) {
       if (mounted && gen == _gen) setState(() => _error = e.message);
     }
+  }
+
+  /// Cuánto dura el desplazamiento animado entre una lectura GPS y la siguiente.
+  /// Se basa en el tiempo real transcurrido entre ambas (más inmersivo que asumir
+  /// siempre el intervalo fijo de sondeo), con un piso y un techo para que nunca
+  /// se sienta brusco ni eternamente lento. Un salto enorme (posible corte de GPS
+  /// o reinicio de posición) se traslada rápido en vez de "patinar" por el mapa.
+  static Duration _driftDuration(double metros, DateTime? antes, DateTime? ahora) {
+    if (metros > 1500) return const Duration(milliseconds: 500);
+    if (antes != null && ahora != null) {
+      final gapMs = ahora.difference(antes).inMilliseconds;
+      if (gapMs > 0) return Duration(milliseconds: gapMs.clamp(800, 4000));
+    }
+    return const Duration(milliseconds: 2000); // sin fecha previa: valor razonable por defecto
   }
 
   // ---------------- cámara ----------------
@@ -234,6 +261,41 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
     );
   }
 
+  // OpenStreetMap estándar: gratis, sin cuenta ni API key (a diferencia de CARTO, que empezó a
+  // exigirla incluso en su tier gratuito). Para el modo oscuro no hay un estilo oficial gratis,
+  // así que se simula invirtiendo los mismos tiles y corrigiendo el matiz (el mismo truco que
+  // "filter: invert(1) hue-rotate(180deg))" en CSS).
+  static const _invertMatrix = <double>[
+    -1, 0, 0, 0, 255,
+    0, -1, 0, 0, 255,
+    0, 0, -1, 0, 255,
+    0, 0, 0, 1, 0,
+  ];
+
+  static const _hueRotate180Matrix = <double>[
+    -0.574, 1.430, 0.144, 0, 0,
+    0.426, 0.430, 0.144, 0, 0,
+    0.426, 1.430, -0.856, 0, 0,
+    0, 0, 0, 1, 0,
+  ];
+
+  Widget _osmTiles(bool dark) {
+    final tiles = TileLayer(
+      urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      subdomains: const ['a', 'b', 'c'],
+      userAgentPackageName: 'com.grupoflash.portal',
+      maxZoom: 19,
+    );
+    if (!dark) return tiles;
+    return ColorFiltered(
+      colorFilter: const ColorFilter.matrix(_hueRotate180Matrix),
+      child: ColorFiltered(
+        colorFilter: const ColorFilter.matrix(_invertMatrix),
+        child: tiles,
+      ),
+    );
+  }
+
   Widget _mapView(BuildContext context, LiveTracking? d) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final destino = d?.destino;
@@ -252,13 +314,7 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
         },
       ),
       children: [
-        TileLayer(
-          urlTemplate: dark
-              ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-              : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-          subdomains: const ['a', 'b', 'c', 'd'],
-          userAgentPackageName: 'com.grupoflash.portal',
-        ),
+        _osmTiles(dark),
         if (destino != null)
           MarkerLayer(markers: [
             Marker(
@@ -266,27 +322,13 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
               width: 64,
               height: 72,
               alignment: Alignment.topCenter,
-              child: _DestinationMarker(retiro: d?.esRetiro ?? false),
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: () => _showDestinoInfo(context, d),
+                child: _DestinationMarker(retiro: d?.esRetiro ?? false),
+              ),
             ),
           ]),
-        // estela del recorrido: crece junto con el camión
-        AnimatedBuilder(
-          animation: _anim,
-          builder: (_, _) {
-            final confirmados = _trail.length > 1 ? _trail.sublist(0, _trail.length - 1) : <LatLng>[];
-            final pts = [...confirmados, ?_vehicle];
-            return PolylineLayer(polylines: [
-              if (pts.length > 1)
-                Polyline(
-                  points: pts,
-                  strokeWidth: 4.5,
-                  color: Brand.accent.withValues(alpha: 0.85),
-                  borderStrokeWidth: 1.5,
-                  borderColor: Colors.white.withValues(alpha: 0.85),
-                ),
-            ]);
-          },
-        ),
         AnimatedBuilder(
           animation: _anim,
           builder: (_, _) {
@@ -297,9 +339,13 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
                   point: v,
                   width: 76,
                   height: 76,
-                  child: _VehicleMarker(
-                    stale: d?.vehiculo?.sinSenal ?? false,
-                    heading: _trail.length > 1 ? _heading : null,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTap: () => _showVehiculoInfo(context, d),
+                    child: _VehicleMarker(
+                      stale: d?.vehiculo?.sinSenal ?? false,
+                      heading: _trail.length > 1 ? _heading : null,
+                    ),
                   ),
                 ),
             ]);
@@ -307,9 +353,43 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
         ),
         const RichAttributionWidget(
           alignment: AttributionAlignment.bottomLeft,
-          attributions: [TextSourceAttribution('© OpenStreetMap · CARTO')],
+          attributions: [TextSourceAttribution('© OpenStreetMap contributors')],
         ),
       ],
+    );
+  }
+
+  void _showDestinoInfo(BuildContext context, LiveTracking? d) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => _InfoSheet(
+        title: (d?.esRetiro ?? false) ? 'Punto de retiro' : 'Punto de entrega',
+        icon: (d?.esRetiro ?? false) ? LucideIcons.packageOpen : LucideIcons.house,
+        rows: [
+          ('Destinatario', widget.destinatario?.isNotEmpty == true ? widget.destinatario! : 'Sin datos'),
+          ('Domicilio', widget.domicilio?.isNotEmpty == true ? widget.domicilio! : 'Sin datos'),
+        ],
+      ),
+    );
+  }
+
+  void _showVehiculoInfo(BuildContext context, LiveTracking? d) {
+    final fecha = d?.vehiculo?.fecha;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => _InfoSheet(
+        title: 'Seguimiento',
+        icon: LucideIcons.truck,
+        rows: [
+          if (widget.pieceId != null) ('Nº de pieza', '#${widget.pieceId}'),
+          if (widget.tracking?.isNotEmpty == true) ('Nº de seguimiento', widget.tracking!),
+          ('Última posición', fecha == null ? 'Sin datos' : fmtDateTime(fecha)),
+        ],
+      ),
     );
   }
 
@@ -594,5 +674,45 @@ class _DestinationMarker extends StatelessWidget {
         ),
       ),
     ]);
+  }
+}
+
+/// Bottom sheet con los datos al tocar un ícono del mapa (destino o vehículo).
+class _InfoSheet extends StatelessWidget {
+  const _InfoSheet({required this.title, required this.icon, required this.rows});
+  final String title;
+  final IconData icon;
+  final List<(String, String)> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(color: cs.outlineVariant, borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+          Row(children: [
+            Icon(icon, size: 20, color: cs.primary),
+            const SizedBox(width: 8),
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+          ]),
+          const SizedBox(height: 16),
+          for (final (label, value) in rows) ...[
+            Text(label, style: TextStyle(color: cs.onSurface.withValues(alpha: 0.55), fontSize: 12.5)),
+            const SizedBox(height: 2),
+            Text(value, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+            const SizedBox(height: 14),
+          ],
+        ]),
+      ),
+    );
   }
 }
