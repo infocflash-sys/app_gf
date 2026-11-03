@@ -12,6 +12,13 @@ import '../data/portal_api.dart';
 import '../theme/app_theme.dart';
 import '../util/format.dart';
 
+/// Una lectura GPS pendiente de animar (en espera dentro de la cadena A→B→C).
+class _Waypoint {
+  const _Waypoint(this.point, this.fecha);
+  final LatLng point;
+  final DateTime? fecha;
+}
+
 /// "Sigue en tiempo real": mapa con el móvil que lleva la pieza y el punto de entrega,
 /// al estilo de las apps de delivery. Se actualiza solo mientras está abierto.
 class LiveTrackingPanel extends StatefulWidget {
@@ -69,6 +76,8 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
   String? _error;
   LatLng? _from; // posición anterior del móvil (para animar el desplazamiento)
   LatLng? _to; // posición actual
+  DateTime? _toFecha; // fecha real de la lectura en la que está parado/llegando _to
+  final List<_Waypoint> _queue = []; // próximas lecturas del último lote, a animar en cadena
   bool _follow = true; // mientras no se mueva el mapa a mano, se mantiene encuadrado
   int _gen = 0;
 
@@ -91,6 +100,7 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _anim.addStatusListener(_onAnimStatus);
     _poll();
     _startTimer();
   }
@@ -98,9 +108,15 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _anim.removeStatusListener(_onAnimStatus);
     _timer?.cancel();
     _anim.dispose();
     super.dispose();
+  }
+
+  /// Al terminar cada tramo, sigue con el próximo de la cola (si hay) para formar la cadena.
+  void _onAnimStatus(AnimationStatus status) {
+    if (status == AnimationStatus.completed) _playNext();
   }
 
   void _startTimer() {
@@ -123,39 +139,68 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
     try {
       final d = await widget.fetch();
       if (!mounted || gen != _gen) return;
-      final prevFecha = _data?.vehiculo?.fecha;
       setState(() {
         _error = null;
-        final nv = d.vehiculo?.point;
-        if (nv == null) {
-          _from = null;
-          _to = null;
-          _trail.clear();
+        final puntos = d.puntosRecientes;
+        if (puntos.isEmpty) {
+          if (_to == null) {
+            _from = null;
+            _to = null;
+            _toFecha = null;
+            _queue.clear();
+            _trail.clear();
+          }
+          // si ya había una posición, se deja la última conocida (puede estar "sin señal")
         } else if (_to == null) {
-          _from = nv;
-          _to = nv;
+          // primera vez: ubica directo en la lectura más nueva, sin animar.
+          final last = puntos.last;
+          _from = last.point;
+          _to = last.point;
+          _toFecha = last.fecha;
+          _queue.clear();
           _anim.value = 1;
           _trail
             ..clear()
-            ..add(nv);
-        } else if (nv != _to) {
-          final metros = _geo.as(LengthUnit.Meter, _to!, nv);
-          if (metros > 5) _heading = _geo.bearing(_to!, nv) * math.pi / 180; // hacia dónde avanza
-          _from = _vehicle; // arranca desde donde se está dibujando ahora
-          _to = nv;
-          _anim.duration = _driftDuration(metros, prevFecha, d.vehiculo?.fecha);
-          _anim.forward(from: 0);
-          _trail.add(nv);
-          if (_trail.length > 40) _trail.removeAt(0);
+            ..add(last.point);
+        } else {
+          // encola las lecturas realmente nuevas (posteriores a la última ya animada o en cola),
+          // en el orden real en que se capturaron: la cadena A→B→C "rellena" el minuto entre una
+          // subida del cartero y la siguiente en vez de saltar y quedar congelada hasta esa subida.
+          final cursor = _queue.isNotEmpty ? _queue.last.fecha : _toFecha;
+          for (final p in puntos) {
+            if (cursor != null && p.fecha != null && !p.fecha!.isAfter(cursor)) continue;
+            _queue.add(_Waypoint(p.point, p.fecha));
+          }
         }
         _data = d;
       });
       widget.onUpdate?.call(d);
       if (!d.activo) _timer?.cancel(); // el recorrido terminó: se deja de consultar
+      if (_anim.isCompleted) _playNext(); // nada animándose: arranca la cola nueva ya mismo
       if (_follow) _fitAll();
     } on ApiException catch (e) {
       if (mounted && gen == _gen) setState(() => _error = e.message);
     }
+  }
+
+  /// Anima el siguiente tramo de la cadena (si hay alguno en cola), con la cadencia real
+  /// entre esa lectura y la anterior. Se dispara al llegar datos nuevos y al terminar cada tramo.
+  void _playNext() {
+    if (_queue.isEmpty || !mounted) return;
+    final next = _queue.removeAt(0);
+    setState(() {
+      final prevTo = _to;
+      final prevFecha = _toFecha;
+      final metros = prevTo != null ? _geo.as(LengthUnit.Meter, prevTo, next.point) : 0.0;
+      if (metros > 5 && prevTo != null) _heading = _geo.bearing(prevTo, next.point) * math.pi / 180;
+      _from = _vehicle; // arranca desde donde se está dibujando ahora mismo
+      _to = next.point;
+      _toFecha = next.fecha;
+      _trail.add(next.point);
+      if (_trail.length > 40) _trail.removeAt(0);
+      _anim.duration = _driftDuration(metros, prevFecha, next.fecha);
+      _anim.forward(from: 0);
+    });
   }
 
   /// Cuánto dura el desplazamiento animado entre una lectura GPS y la siguiente.
@@ -163,13 +208,19 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
   /// siempre el intervalo fijo de sondeo), con un piso y un techo para que nunca
   /// se sienta brusco ni eternamente lento. Un salto enorme (posible corte de GPS
   /// o reinicio de posición) se traslada rápido en vez de "patinar" por el mapa.
+  /// Velocidad llevada a un 33% de la original (factor ×3) para una transición
+  /// más inmersiva, tipo Uber/PedidosYa, en vez de un desplazamiento brusco.
+  static const _driftSlowdown = 3;
+
   static Duration _driftDuration(double metros, DateTime? antes, DateTime? ahora) {
-    if (metros > 1500) return const Duration(milliseconds: 500);
+    if (metros > 1500) return const Duration(milliseconds: 500 * _driftSlowdown);
     if (antes != null && ahora != null) {
       final gapMs = ahora.difference(antes).inMilliseconds;
-      if (gapMs > 0) return Duration(milliseconds: gapMs.clamp(800, 4000));
+      if (gapMs > 0) {
+        return Duration(milliseconds: (gapMs * _driftSlowdown).clamp(800 * _driftSlowdown, 4000 * _driftSlowdown));
+      }
     }
-    return const Duration(milliseconds: 2000); // sin fecha previa: valor razonable por defecto
+    return const Duration(milliseconds: 2000 * _driftSlowdown); // sin fecha previa: valor razonable por defecto
   }
 
   // ---------------- cámara ----------------

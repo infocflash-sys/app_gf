@@ -171,6 +171,13 @@ class VehiclePosition {
   final bool sinSenal;
 }
 
+/// Una lectura GPS reciente del vehículo, para la transición animada en cadena.
+class TrailPoint {
+  const TrailPoint({required this.point, required this.fecha});
+  final LatLng point;
+  final DateTime? fecha;
+}
+
 /// Seguimiento en tiempo real de una pieza (recorrido abierto).
 class LiveTracking {
   const LiveTracking({
@@ -179,6 +186,7 @@ class LiveTracking {
     this.tipo,
     this.destino,
     this.vehiculo,
+    this.puntosRecientes = const [],
     this.inicioRecorrido,
   });
   final bool activo;
@@ -188,6 +196,10 @@ class LiveTracking {
   final String? tipo;
   final LatLng? destino;
   final VehiclePosition? vehiculo;
+
+  /// Últimas lecturas GPS del cartero (de más vieja a más nueva, hasta 3), tal cual se subieron
+  /// en el último lote: la app las anima en cadena en vez de saltar directo a la más nueva.
+  final List<TrailPoint> puntosRecientes;
 
   /// Primer punto GPS del cartero hoy (hora en que salió "a la calle" con este recorrido).
   final DateTime? inicioRecorrido;
@@ -209,6 +221,10 @@ class LiveTracking {
               sinSenal: v['sinSenal'] == true,
             )
           : null,
+      puntosRecientes: [
+        for (final p in (j['puntosRecientes'] as List? ?? []))
+          if (p is Map && pt(p) != null) TrailPoint(point: pt(p)!, fecha: _date(p['fecha'])),
+      ],
       inicioRecorrido: _date(j['inicioRecorrido']),
     );
   }

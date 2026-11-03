@@ -33,20 +33,27 @@ class LiveTrackingScreen extends StatelessWidget {
             domicilio: domicilio,
           ),
         ),
-        SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: IconButton.filled(
-              tooltip: 'Volver',
-              onPressed: () => Navigator.of(context).maybePop(),
-              style: IconButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.surface,
-                foregroundColor: Theme.of(context).colorScheme.onSurface,
-                elevation: 4,
-                shadowColor: Colors.black45,
-                minimumSize: const Size(46, 46),
+        // Sin Positioned, este sería el único hijo "no posicionado" del Stack y lo encogería
+        // a su propio tamaño (el bug real del mapa maximizado "en blanco": quedaba comprimido
+        // en una esquina en vez de ocupar toda la pantalla).
+        Positioned(
+          top: 0,
+          left: 0,
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: IconButton.filled(
+                tooltip: 'Volver',
+                onPressed: () => Navigator.of(context).maybePop(),
+                style: IconButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.surface,
+                  foregroundColor: Theme.of(context).colorScheme.onSurface,
+                  elevation: 4,
+                  shadowColor: Colors.black45,
+                  minimumSize: const Size(46, 46),
+                ),
+                icon: const Icon(LucideIcons.arrowLeft),
               ),
-              icon: const Icon(LucideIcons.arrowLeft),
             ),
           ),
         ),

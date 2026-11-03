@@ -82,4 +82,36 @@ void main() {
     expect(Piece.fromJson({'id': 1, 'enVivo': true}).enVivo, isTrue);
     expect(Piece.fromJson({'id': 1}).enVivo, isFalse);
   });
+
+  testWidgets(
+    'mapa a pantalla completa: ocupa toda la pantalla (no se encoge por el botón de volver)',
+    (t) async {
+      // Reproduce el Stack real de LiveTrackingScreen: un botón "volver" sin Positioned, al lado
+      // de Positioned.fill con el mapa, encogía TODO el Stack al tamaño del botón (bug real:
+      // el mapa quedaba comprimido en una esquina en vez de ocupar la pantalla).
+      await t.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Stack(children: [
+            Positioned.fill(
+              child: LiveTrackingPanel(
+                fullScreen: true,
+                showMap: false,
+                fetch: () async => tr(sinSenal: false),
+              ),
+            ),
+            Positioned(
+              top: 0,
+              left: 0,
+              child: SafeArea(child: IconButton(onPressed: () {}, icon: const Icon(Icons.arrow_back))),
+            ),
+          ]),
+        ),
+      ));
+      await t.pump(const Duration(milliseconds: 100));
+
+      final screenSize = t.view.physicalSize / t.view.devicePixelRatio;
+      final panelSize = t.getSize(find.byType(LiveTrackingPanel));
+      expect(panelSize, screenSize);
+    },
+  );
 }

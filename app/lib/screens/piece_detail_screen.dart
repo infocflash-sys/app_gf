@@ -96,7 +96,9 @@ class _PieceDetailScreenState extends State<PieceDetailScreen> {
         if (didPop) ResumeStore.clear();
       },
       child: Scaffold(
-      body: _TopBar(child: CustomScrollView(slivers: [
+      body: _TopBar(child: RefreshIndicator(
+        onRefresh: _load,
+        child: CustomScrollView(physics: const AlwaysScrollableScrollPhysics(), slivers: [
         SliverToBoxAdapter(
           child: _Header(
             piece: d?.piece ?? p,
@@ -218,7 +220,7 @@ class _PieceDetailScreenState extends State<PieceDetailScreen> {
                 ),
         ),
       ])),
-      ),
+      )),
     );
   }
 }

@@ -5,6 +5,9 @@ import { TtlCache, toIso } from './util.js';
 const R = ident(config.ruteoDb);
 const POS_TTL_MS = 15_000;
 const circuitCache = new TtlCache(2000);
+const recentCache = new TtlCache(2000);
+// La app del cartero captura una coordenada cada 20 s pero sube el lote una vez por minuto.
+const RECENT_TRAIL_MAX = 3;
 
 // ---------------------------------------------------------------------------
 // Lógica pura (con tests)
@@ -91,6 +94,24 @@ export async function positionOf(carteroId) {
   return positions.get(carteroId) ?? null;
 }
 
+/**
+ * Hasta las últimas RECENT_TRAIL_MAX posiciones del cartero (de más vieja a más nueva).
+ * Mismo criterio que en api_php: en vez de animar solo la lectura más nueva y quedar
+ * "congelada" hasta la próxima subida (una vez por minuto), se arma la cadena real.
+ */
+export async function recentPositions(carteroId) {
+  return recentCache.get(`r:${carteroId}`, POS_TTL_MS, async () => {
+    const rows = await query(
+      `SELECT Latitude AS lat, Longitude AS lng, FechaLocal AS fecha
+       FROM cartero_gps
+       WHERE cartero_id = ? AND FechaLocal >= NOW() - INTERVAL 24 HOUR
+       ORDER BY FechaLocal DESC, id DESC LIMIT ${RECENT_TRAIL_MAX}`,
+      [carteroId],
+    );
+    return rows.reverse().map((r) => ({ lat: Number(r.lat), lng: Number(r.lng), fecha: toIso(r.fecha) }));
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Circuito: flash_piezas.id -> ruteo.piezas.pieza_id -> ruteo.piezas.id -> asignacion.pieza_id
 //           -> asignacion.grupo_asignacion_id (= recorrido) -> grupo_asignacion.id (estado 0) -> id_cartero
@@ -152,5 +173,6 @@ export async function trackingOf(piezaId, { estadoId, estado = '' } = {}) {
     tipo: stop?.tipo ?? null,
     destino: stop ? { lat: stop.lat, lng: stop.lng } : null,
     vehiculo: describePosition(pos),
+    puntosRecientes: c.cartero ? await recentPositions(c.cartero) : [],
   };
 }

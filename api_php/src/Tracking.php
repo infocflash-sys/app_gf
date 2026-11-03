@@ -9,6 +9,9 @@ final class Tracking
     private const POS_TTL_SECONDS = 15;
     private const CIRCUIT_TTL_SECONDS = 10;
 
+    /** La app del cartero captura una coordenada cada 20 s pero sube el lote una vez por minuto. */
+    private const RECENT_TRAIL_MAX = 3;
+
     private static function cache(): TtlCache
     {
         static $c = null;
@@ -101,6 +104,32 @@ final class Tracking
                 // el timezone del servidor (normalmente UTC), desfasando ~3 h el cálculo de antigüedad.
                 'fechaTs' => strtotime(Util::toIso($r['fecha'])),
             ];
+        });
+    }
+
+    /**
+     * Hasta las últimas RECENT_TRAIL_MAX posiciones del cartero (de más vieja a más nueva).
+     * Su app sube el lote una vez por minuto aunque capture una coordenada cada 20 s: en vez de
+     * animar solo la lectura más nueva y quedar "congelada" hasta la próxima subida, la app arma
+     * la cadena real con estos puntos y reparte el movimiento entre ellos.
+     *
+     * @return array<int, array{lat: float, lng: float, fecha: ?string}>
+     */
+    public static function recentPositions(int $carteroId): array
+    {
+        return self::cache()->get("recent:{$carteroId}", self::POS_TTL_SECONDS, static function () use ($carteroId): array {
+            $rows = Db::query(
+                'SELECT Latitude AS lat, Longitude AS lng, FechaLocal AS fecha
+                 FROM cartero_gps
+                 WHERE cartero_id = ? AND FechaLocal >= NOW() - INTERVAL 24 HOUR
+                 ORDER BY FechaLocal DESC, id DESC LIMIT ' . self::RECENT_TRAIL_MAX,
+                [$carteroId],
+            );
+            return array_reverse(array_map(static fn (array $r): array => [
+                'lat' => (float) $r['lat'],
+                'lng' => (float) $r['lng'],
+                'fecha' => Util::toIso($r['fecha']),
+            ], $rows));
         });
     }
 
@@ -205,6 +234,7 @@ final class Tracking
             'tipo' => $stop['tipo'] ?? null,
             'destino' => $stop !== null ? ['lat' => $stop['lat'], 'lng' => $stop['lng']] : null,
             'vehiculo' => self::describePosition($pos),
+            'puntosRecientes' => $cartero !== null ? self::recentPositions($cartero) : [],
             'inicioRecorrido' => $cartero !== null ? Util::toIso(self::inicioRecorrido($cartero)) : null,
         ];
     }
