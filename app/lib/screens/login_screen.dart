@@ -10,6 +10,7 @@ import '../widgets/brand_logo.dart';
 import '../widgets/double_back.dart';
 import '../widgets/photo_backdrop.dart';
 import 'greeting_screen.dart';
+import 'guest_tracking_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key, this.notice});
@@ -190,6 +191,15 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ]),
                       ).animate().fadeIn(delay: 150.ms, duration: 500.ms).slideY(begin: 0.08, end: 0),
+                      const SizedBox(height: 10),
+                      TextButton.icon(
+                        onPressed: _loading
+                            ? null
+                            : () => Navigator.of(context).push(fadeRoute(const GuestTrackingScreen())),
+                        icon: Icon(LucideIcons.packageSearch, size: 18, color: Colors.white.withValues(alpha: 0.75)),
+                        label: Text('Acceso como Destinatario',
+                            style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontWeight: FontWeight.w600)),
+                      ).animate().fadeIn(delay: 250.ms, duration: 500.ms),
                     ]),
                   ),
                 ),

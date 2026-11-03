@@ -35,6 +35,16 @@ final class Routes
         Router::json(404, ['error' => 'Archivo no encontrado.', 'code' => 'NOT_FOUND']);
     }
 
+    private static function piezaNotFound(): void
+    {
+        Router::json(404, ['error' => 'Pieza no encontrada.', 'code' => 'NOT_FOUND']);
+    }
+
+    private static function rateLimited(): void
+    {
+        Router::json(429, ['error' => 'Demasiados intentos. Probá de nuevo en un momento.', 'code' => 'RATE_LIMIT']);
+    }
+
     private static function sinceOf(int $dias): string
     {
         // hora de Argentina (UTC-3): igual que sinceOf() en routes.js
@@ -64,6 +74,85 @@ final class Routes
             'fecha' => Util::toIso($r['fecha']),
             'actualizado' => Util::toIso($r['actualizado']),
         ];
+    }
+
+    /** Fila base de una pieza según un WHERE a medida (dueño por cliente_id, o por barcode exacto). */
+    private static function detailRow(string $where, array $params): ?array
+    {
+        $rows = Db::query(
+            'SELECT p.id, p.barcode, p.barcode_externo, p.remito, p.destinatario, p.domicilio, p.piso,
+                    p.departamento_oficina, COALESCE(ul.nombre, p.localidad_destino) AS localidad_destino,
+                    pr.nombre AS provincia, p.codigo_postal_destino AS cp, p.cantidad, p.docum_file, p.estado_id,
+                    ev.nombre AS estado, ev.pieza_estado_id AS grp,
+                    p.`create` AS fecha, p.`update` AS actualizado
+             ' . self::FROM_OWNED . ' ' . self::JOIN_LOC . "
+             WHERE {$where} LIMIT 1",
+            $params,
+        );
+        return $rows[0] ?? null;
+    }
+
+    /** Arma el detalle completo (eventos, archivos, en vivo) a partir de la fila de detailRow(). */
+    private static function buildDetail(array $p): array
+    {
+        $id = (int) $p['id'];
+        $paqRows = Db::query('SELECT bultos, peso FROM flash_piezas_paquetes WHERE pieza_id = ? LIMIT 1', [$id]);
+        $paq = $paqRows[0] ?? null;
+
+        $tr = Db::query(
+            'SELECT t.id, t.estado_id, ev.nombre AS estado, ev.pieza_estado_id AS grp,
+                    t.`create` AS fecha, t.foto, t.firma_img
+             FROM flash_piezas_tracking t
+             LEFT JOIN flash_piezas_estados_variables ev ON ev.id = t.estado_id
+             WHERE t.pieza_id = ? ORDER BY t.`create` DESC, t.id DESC',
+            [$id],
+        );
+
+        $DEFINITIVO = Config::get()->estadoDefinitivo;
+        $eventosRaw = array_map(static function (array $t) use ($DEFINITIVO): array {
+            return [
+                'id' => (int) $t['id'],
+                'estadoId' => $t['estado_id'] !== null ? (int) $t['estado_id'] : null,
+                'estado' => $t['estado'],
+                'definitivo' => isset($t['grp']) && ((int) $t['grp']) === $DEFINITIVO,
+                'fecha' => Util::toIso($t['fecha']),
+                'foto' => Util::safeName($t['foto'], ['jpg', 'jpeg', 'png']) !== null,
+                'firma' => Util::safeName($t['firma_img'], ['jpg', 'jpeg', 'png']) !== null,
+                'fotoEventoId' => (int) $t['id'],
+            ];
+        }, $tr);
+        $eventos = array_map(static function (array $e): array {
+            unset($e['fotoEventoId']);
+            return $e;
+        }, Util::dedupeEvents($eventosRaw));
+
+        $base = self::mapPieza($p);
+        $enVivo = Tracking::enDistribucion($base['estadoId']) && in_array($id, Tracking::liveIds([$id]), true);
+
+        return [
+            ...$base,
+            'enVivo' => $enVivo,
+            'localidad' => $p['cp'] ? "{$base['localidad']} (CP {$p['cp']})" : $base['localidad'],
+            'domicilio' => implode(', ', array_filter([
+                $p['domicilio'],
+                $p['piso'] ? "Piso {$p['piso']}" : null,
+                $p['departamento_oficina'],
+            ])),
+            'bultos' => $paq['bultos'] ?? $p['cantidad'],
+            'pesoKg' => $paq['peso'] ?? null,
+            'pdf' => Util::safeName($p['docum_file'], ['pdf']) !== null,
+            'eventos' => $eventos,
+        ];
+    }
+
+    /** Fila mínima para el seguimiento en vivo, según un WHERE a medida. */
+    private static function seguimientoRow(string $where, array $params): ?array
+    {
+        $rows = Db::query(
+            'SELECT p.id, p.estado_id, ev.nombre AS estado ' . self::FROM_OWNED . " WHERE {$where} LIMIT 1",
+            $params,
+        );
+        return $rows[0] ?? null;
     }
 
     public static function register(Router $router): void
@@ -205,70 +294,13 @@ final class Routes
         $router->get('/piezas/:id', static function (Request $req, array $session): void {
             $id = (int) $req->param('id');
             $ids = array_map(static fn (array $c) => $c['id'], $session['clientes']);
-            $rows = Db::query(
-                'SELECT p.id, p.barcode, p.barcode_externo, p.remito, p.destinatario, p.domicilio, p.piso,
-                        p.departamento_oficina, COALESCE(ul.nombre, p.localidad_destino) AS localidad_destino,
-                        pr.nombre AS provincia, p.codigo_postal_destino AS cp, p.cantidad, p.docum_file, p.estado_id,
-                        ev.nombre AS estado, ev.pieza_estado_id AS grp,
-                        p.`create` AS fecha, p.`update` AS actualizado
-                 ' . self::FROM_OWNED . ' ' . self::JOIN_LOC . '
-                 WHERE p.id = ? AND ci.cliente_id IN (?) LIMIT 1',
-                [$id, $ids],
-            );
             // si la pieza es de otro cliente se responde igual que si no existiera
-            if (!$rows) {
-                Router::json(404, ['error' => 'Pieza no encontrada.', 'code' => 'NOT_FOUND']);
+            $p = self::detailRow('p.id = ? AND ci.cliente_id IN (?)', [$id, $ids]);
+            if ($p === null) {
+                self::piezaNotFound();
                 return;
             }
-            $p = $rows[0];
-
-            $paqRows = Db::query('SELECT bultos, peso FROM flash_piezas_paquetes WHERE pieza_id = ? LIMIT 1', [$id]);
-            $paq = $paqRows[0] ?? null;
-
-            $tr = Db::query(
-                'SELECT t.id, t.estado_id, ev.nombre AS estado, ev.pieza_estado_id AS grp,
-                        t.`create` AS fecha, t.foto, t.firma_img
-                 FROM flash_piezas_tracking t
-                 LEFT JOIN flash_piezas_estados_variables ev ON ev.id = t.estado_id
-                 WHERE t.pieza_id = ? ORDER BY t.`create` DESC, t.id DESC',
-                [$id],
-            );
-
-            $DEFINITIVO = Config::get()->estadoDefinitivo;
-            $eventosRaw = array_map(static function (array $t) use ($DEFINITIVO): array {
-                return [
-                    'id' => (int) $t['id'],
-                    'estadoId' => $t['estado_id'] !== null ? (int) $t['estado_id'] : null,
-                    'estado' => $t['estado'],
-                    'definitivo' => isset($t['grp']) && ((int) $t['grp']) === $DEFINITIVO,
-                    'fecha' => Util::toIso($t['fecha']),
-                    'foto' => Util::safeName($t['foto'], ['jpg', 'jpeg', 'png']) !== null,
-                    'firma' => Util::safeName($t['firma_img'], ['jpg', 'jpeg', 'png']) !== null,
-                    'fotoEventoId' => (int) $t['id'],
-                ];
-            }, $tr);
-            $eventos = array_map(static function (array $e): array {
-                unset($e['fotoEventoId']);
-                return $e;
-            }, Util::dedupeEvents($eventosRaw));
-
-            $base = self::mapPieza($p);
-            $enVivo = Tracking::enDistribucion($base['estadoId']) && in_array($id, Tracking::liveIds([$id]), true);
-
-            Router::json(200, [
-                ...$base,
-                'enVivo' => $enVivo,
-                'localidad' => $p['cp'] ? "{$base['localidad']} (CP {$p['cp']})" : $base['localidad'],
-                'domicilio' => implode(', ', array_filter([
-                    $p['domicilio'],
-                    $p['piso'] ? "Piso {$p['piso']}" : null,
-                    $p['departamento_oficina'],
-                ])),
-                'bultos' => $paq['bultos'] ?? $p['cantidad'],
-                'pesoKg' => $paq['peso'] ?? null,
-                'pdf' => Util::safeName($p['docum_file'], ['pdf']) !== null,
-                'eventos' => $eventos,
-            ]);
+            Router::json(200, self::buildDetail($p));
         }, auth: true);
 
         // ---------- archivos (siempre tras comprobar que la pieza es del cliente) ----------
@@ -319,17 +351,11 @@ final class Routes
         $router->get('/piezas/:id/seguimiento', static function (Request $req, array $session): void {
             $id = (int) $req->param('id');
             $ids = array_map(static fn (array $c) => $c['id'], $session['clientes']);
-            $rows = Db::query(
-                'SELECT p.id, p.estado_id, ev.nombre AS estado
-                 ' . self::FROM_OWNED . '
-                 WHERE p.id = ? AND ci.cliente_id IN (?) LIMIT 1',
-                [$id, $ids],
-            );
-            if (!$rows) {
-                Router::json(404, ['error' => 'Pieza no encontrada.', 'code' => 'NOT_FOUND']);
+            $p = self::seguimientoRow('p.id = ? AND ci.cliente_id IN (?)', [$id, $ids]);
+            if ($p === null) {
+                self::piezaNotFound();
                 return;
             }
-            $p = $rows[0];
             header('Cache-Control: no-store');
             Router::json(200, Tracking::trackingOf(
                 (int) $p['id'],
@@ -337,5 +363,43 @@ final class Routes
                 $p['estado'] ?? '',
             ));
         }, auth: true);
+
+        // ---------- acceso de destinatarios (sin login, por nº de seguimiento exacto) ----------
+        // Pensado para quien recibe el envío pero no tiene cuenta en el TMS: solo ve ESA pieza,
+        // nunca una lista. Coincidencia siempre exacta (nunca LIKE) para no exponer otras piezas.
+        $router->get('/public/pieza/:barcode', static function (Request $req): void {
+            if (!RateLimit::allow('public_pieza', 8, 60)) {
+                self::rateLimited();
+                return;
+            }
+            $barcode = self::clean($req->param('barcode'));
+            $p = $barcode !== '' ? self::detailRow('(p.barcode_externo = ? OR p.barcode = ?)', [$barcode, $barcode]) : null;
+            if ($p === null) {
+                self::piezaNotFound();
+                return;
+            }
+            Router::json(200, self::buildDetail($p));
+        });
+
+        $router->get('/public/pieza/:barcode/seguimiento', static function (Request $req): void {
+            if (!RateLimit::allow('public_seguimiento', 40, 60)) {
+                self::rateLimited();
+                return;
+            }
+            $barcode = self::clean($req->param('barcode'));
+            // se revalida el código en cada sondeo (no se confía en un id numérico ya resuelto):
+            // así la única puerta de entrada sigue siendo conocer el nº de seguimiento real.
+            $p = $barcode !== '' ? self::seguimientoRow('(p.barcode_externo = ? OR p.barcode = ?)', [$barcode, $barcode]) : null;
+            if ($p === null) {
+                self::piezaNotFound();
+                return;
+            }
+            header('Cache-Control: no-store');
+            Router::json(200, Tracking::trackingOf(
+                (int) $p['id'],
+                $p['estado_id'] !== null ? (int) $p['estado_id'] : null,
+                $p['estado'] ?? '',
+            ));
+        });
     }
 }

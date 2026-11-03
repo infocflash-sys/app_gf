@@ -147,6 +147,16 @@ class PortalApi {
   Future<LiveTracking> tracking(int id) async =>
       LiveTracking.fromJson(await _request('GET', '/piezas/$id/seguimiento') as Map<String, dynamic>);
 
+  // ---------------- acceso de destinatarios (sin login) ----------------
+
+  /// Busca una única pieza por nº de seguimiento exacto, sin sesión. Para quien recibe el
+  /// envío pero no tiene cuenta en el TMS.
+  Future<PieceDetail> publicDetail(String barcode) async => PieceDetail.fromJson(
+      await _request('GET', '/public/pieza/${Uri.encodeComponent(barcode)}', auth: false) as Map<String, dynamic>);
+
+  Future<LiveTracking> publicTracking(String barcode) async => LiveTracking.fromJson(await _request(
+      'GET', '/public/pieza/${Uri.encodeComponent(barcode)}/seguimiento', auth: false) as Map<String, dynamic>);
+
   final Map<String, Uint8List> _imageCache = {};
 
   /// Foto o firma de un evento. kind: 'foto' | 'firma'.
