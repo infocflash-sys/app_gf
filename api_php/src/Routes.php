@@ -127,7 +127,9 @@ final class Routes
         }, Util::dedupeEvents($eventosRaw));
 
         $base = self::mapPieza($p);
-        $enVivo = Tracking::enDistribucion($base['estadoId']) && in_array($id, Tracking::liveIds([$id]), true);
+        // "en vivo" = tiene recorrido abierto en ruteo, sin importar el estado_id (cubre también
+        // el retiro de gestión 1/2, que arranca el recorrido antes de existir la HDR).
+        $enVivo = in_array($id, Tracking::liveIds([$id]), true);
 
         return [
             ...$base,
@@ -214,11 +216,12 @@ final class Routes
                 $filtro .= " AND (ev.pieza_estado_id IS NULL OR ev.pieza_estado_id <> {$DEFINITIVO})";
             }
             if ($grupo === 'en_recorrido') {
-                // Solo piezas "En distribución" con recorrido abierto ahora mismo (listas para el mapa en vivo).
+                // Piezas con recorrido abierto ahora mismo (listas para el mapa en vivo), sin
+                // importar el estado_id: cubre también el retiro de gestión 1/2, que arranca el
+                // recorrido antes de existir la HDR (la pieza sigue diciendo "Pendiente de Retiro").
                 $R = Db::ident(Config::get()->ruteoDb);
-                $estadoEnDist = Config::get()->estadoEnDistribucion;
                 $recorridoAbierto = Config::get()->recorridoAbierto;
-                $filtro .= " AND p.estado_id = {$estadoEnDist} AND EXISTS (
+                $filtro .= " AND EXISTS (
                     SELECT 1 FROM {$R}.piezas rp
                     JOIN {$R}.asignacion a ON a.pieza_id = rp.id
                     JOIN {$R}.grupo_asignacion ga ON ga.id = a.grupo_asignacion_id
@@ -240,11 +243,8 @@ final class Routes
             );
 
             $items = array_map(self::mapPieza(...), array_slice($rows, 0, $size));
-            $enDistribucionIds = array_map(
-                static fn (array $i) => $i['id'],
-                array_filter($items, static fn (array $i) => Tracking::enDistribucion($i['estadoId'])),
-            );
-            $live = Tracking::liveIds(array_values($enDistribucionIds));
+            // "en vivo" = tiene recorrido abierto en ruteo, sin importar el estado_id.
+            $live = Tracking::liveIds(array_map(static fn (array $i) => $i['id'], $items));
             foreach ($items as &$it) {
                 $it['enVivo'] = in_array($it['id'], $live, true);
             }
@@ -267,16 +267,17 @@ final class Routes
                     ));
                     $total = array_sum(array_map(static fn (array $x) => (int) $x['n'], $g));
 
+                    // Recorrido abierto, sin importar el estado_id (ver nota en el filtro 'en_recorrido').
                     $R = Db::ident(Config::get()->ruteoDb);
                     $enRecorridoRows = Db::query(
                         'SELECT COUNT(*) AS n ' . self::FROM_OWNED . "
-                         WHERE ci.cliente_id IN (?) AND p.`create` >= ? AND p.estado_id = ? AND EXISTS (
+                         WHERE ci.cliente_id IN (?) AND p.`create` >= ? AND EXISTS (
                             SELECT 1 FROM {$R}.piezas rp
                             JOIN {$R}.asignacion a ON a.pieza_id = rp.id
                             JOIN {$R}.grupo_asignacion ga ON ga.id = a.grupo_asignacion_id
                             WHERE rp.pieza_id = p.id AND ga.estado = ?
                          )",
-                        [$ids, self::sinceOf($dias), Config::get()->estadoEnDistribucion, Config::get()->recorridoAbierto],
+                        [$ids, self::sinceOf($dias), Config::get()->recorridoAbierto],
                     );
 
                     return [

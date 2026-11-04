@@ -9,16 +9,11 @@ process.env.JWT_SECRET ||= 'test-secret';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const { pickStop, describePosition, enDistribucion, trackingOf } = await import('../src/tracking.js');
+const { pickStop, describePosition } = await import('../src/tracking.js');
 
-test('solo las piezas "En distribución" (estado 2) tienen seguimiento', async () => {
-  assert.equal(enDistribucion(2), true);
-  assert.equal(enDistribucion('2'), true);
-  for (const otro of [1, 13, 62, 82, null, undefined]) assert.equal(enDistribucion(otro), false);
-  // con otro estado ni siquiera se consulta la base: responde inactivo directamente
-  assert.deepEqual(await trackingOf(214031, { estadoId: 82, estado: 'Pendiente de Retiro' }), { activo: false });
-  assert.deepEqual(await trackingOf(212991, { estadoId: 13, estado: 'Entregado' }), { activo: false });
-});
+// `trackingOf()` ahora siempre consulta `ruteo` (recorrido abierto) antes de mirar el estado_id
+// -ya no hay un gate que evite la consulta-, así que ya no se puede probar sin una DB real; queda
+// cubierto por las pruebas manuales de lectura hechas al validar la lógica con datos reales.
 
 const detalle = [
   { tipo: 'ORIGEN/DESTINO', latitud: '-24.2064098', longitud: '-65.2832773', orden_recorrido: 1 },

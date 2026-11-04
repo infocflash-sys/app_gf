@@ -2,7 +2,7 @@ import { config } from './config.js';
 import { query } from './db.js';
 import { authenticate, issueTokens, login, profileOf, refresh } from './auth.js';
 import { getImage, getPdf, streamOf } from './files.js';
-import { enDistribucion, liveIds, trackingOf } from './tracking.js';
+import { liveIds, trackingOf } from './tracking.js';
 import { TtlCache, dedupeEvents, safeName, toIso } from './util.js';
 
 const cache = new TtlCache(1000);
@@ -107,8 +107,8 @@ export default async function routes(app) {
     );
 
     const items = rows.slice(0, size).map(mapPieza);
-    // marca "en vivo" las piezas "En distribución" que están en un recorrido abierto (una sola consulta por página)
-    const live = await liveIds(items.filter((i) => enDistribucion(i.estadoId)).map((i) => i.id));
+    // "en vivo" = tiene recorrido abierto en ruteo, sin importar el estado_id (una sola consulta por página)
+    const live = await liveIds(items.map((i) => i.id));
     for (const it of items) it.enVivo = live.has(it.id);
     const out = { page, size, hasMore: rows.length > size, items };
 
@@ -169,7 +169,8 @@ export default async function routes(app) {
     ).map(({ fotoEventoId, ...e }) => e);
 
     const base = mapPieza(p);
-    const enVivo = enDistribucion(base.estadoId) && (await liveIds([id])).has(id);
+    // "en vivo" = tiene recorrido abierto en ruteo, sin importar el estado_id.
+    const enVivo = (await liveIds([id])).has(id);
     return {
       ...base,
       enVivo,

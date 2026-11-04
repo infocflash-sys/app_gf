@@ -169,14 +169,17 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
         _error = null;
         final puntos = d.puntosRecientes;
         if (puntos.isEmpty) {
-          if (_to == null) {
+          // "en sucursal" nunca tiene vehículo que mostrar: a diferencia de un corte de señal
+          // puntual, se limpia la posición vieja en vez de dejarla "congelada" en el mapa.
+          if (_to == null || d.esEnSucursal) {
             _from = null;
             _to = null;
             _toFecha = null;
             _queue.clear();
             _trail.clear();
           }
-          // si ya había una posición, se deja la última conocida (puede estar "sin señal")
+          // si ya había una posición y no es "en sucursal", se deja la última conocida (puede
+          // estar "sin señal")
         } else if (_to == null) {
           // primera vez: en vez de ubicar directo en la lectura más nueva y quedar estático hasta
           // el próximo sondeo (~15 s de "mapa congelado" que se siente poco vivo), arranca desde
@@ -266,9 +269,11 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
         } catch (_) {} // el mapa todavía no está listo
       });
 
-  /// Encuadra el móvil y el punto de entrega.
+  /// Encuadra el móvil y el/los punto(s) de parada (retiro y/o entrega, o destino/sucursal).
   void _fitAll() {
-    final pts = [?_to, ?_data?.destino];
+    final d = _data;
+    final paradas = d?.paradas ?? const [];
+    final pts = [?_to, if (paradas.isNotEmpty) ...paradas.map((p) => p.point) else ?d?.destino];
     if (pts.isEmpty) return;
     _afterFrame(() {
       if (pts.length == 1) {
@@ -415,7 +420,22 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
       ),
       children: [
         _osmTiles(dark),
-        if (destino != null)
+        if ((d?.paradas ?? const []).isNotEmpty)
+          MarkerLayer(markers: [
+            for (final p in d!.paradas)
+              Marker(
+                point: p.point,
+                width: 64,
+                height: 72,
+                alignment: Alignment.topCenter,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onTap: () => _showDestinoInfo(context, d, parada: p),
+                  child: _DestinationMarker(retiro: p.esRetiro),
+                ),
+              ),
+          ])
+        else if (destino != null)
           MarkerLayer(markers: [
             Marker(
               point: destino,
@@ -425,7 +445,10 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
               child: GestureDetector(
                 behavior: HitTestBehavior.translucent,
                 onTap: () => _showDestinoInfo(context, d),
-                child: _DestinationMarker(retiro: d?.esRetiro ?? false, traslado: d?.esTraslado ?? false),
+                child: _DestinationMarker(
+                  retiro: false,
+                  traslado: (d?.esTraslado ?? false) || (d?.esEnSucursal ?? false),
+                ),
               ),
             ),
           ]),
@@ -459,15 +482,19 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
     );
   }
 
-  void _showDestinoInfo(BuildContext context, LiveTracking? d) {
-    final traslado = d?.esTraslado ?? false;
-    final retiro = d?.esRetiro ?? false;
+  /// [parada] se informa cuando se tocó uno de los pines de `paradas` (puede haber 2: retiro y
+  /// entrega, en gestión tipo 1); si no, es el pin único de traslado/sucursal.
+  void _showDestinoInfo(BuildContext context, LiveTracking? d, {Parada? parada}) {
+    final traslado = parada == null && ((d?.esTraslado ?? false) || (d?.esEnSucursal ?? false));
+    final retiro = parada?.esRetiro ?? (d?.esRetiro ?? false);
     showModalBottomSheet(
       context: context,
       backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => _InfoSheet(
-        title: traslado ? 'Sucursal de destino' : (retiro ? 'Punto de retiro' : 'Punto de entrega'),
+        title: traslado
+            ? ((d?.esEnSucursal ?? false) ? 'Sucursal donde se encuentra' : 'Sucursal de destino')
+            : (retiro ? 'Punto de retiro' : 'Punto de entrega'),
         icon: traslado ? LucideIcons.warehouse : (retiro ? LucideIcons.packageOpen : LucideIcons.house),
         rows: traslado
             ? [('Sucursal', d?.destinoNombre?.isNotEmpty == true ? d!.destinoNombre! : 'Sin datos')]
@@ -515,6 +542,13 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
       subtitle = 'El recorrido finalizó o la pieza cambió de estado.';
       icon = LucideIcons.circleCheck;
       color = cs.primary;
+    } else if (d.esEnSucursal) {
+      title = d.destinoNombre?.isNotEmpty == true
+          ? 'Tu pieza está en ${d.destinoNombre}'
+          : 'Tu pieza está en una sucursal';
+      subtitle = 'Pronto continuará su recorrido';
+      icon = LucideIcons.warehouse;
+      color = cs.onSurface.withValues(alpha: 0.6);
     } else if (d.vehiculo == null) {
       title = 'Sin señal del vehículo por ahora';
       subtitle = 'Apenas recibamos su ubicación la vas a ver en el mapa.';

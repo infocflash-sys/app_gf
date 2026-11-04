@@ -178,6 +178,16 @@ class TrailPoint {
   final DateTime? fecha;
 }
 
+/// Una parada del recorrido (retiro o entrega). En gestión tipo 1 (retiro y entrega el mismo
+/// día) puede haber dos: una de cada tipo, en el mismo recorrido.
+class Parada {
+  const Parada({required this.tipo, required this.point});
+  final String tipo; // 'RETIRO' o 'ENTREGA'
+  final LatLng point;
+
+  bool get esRetiro => tipo == 'RETIRO';
+}
+
 /// Seguimiento en tiempo real de una pieza (recorrido abierto).
 class LiveTracking {
   const LiveTracking({
@@ -186,6 +196,7 @@ class LiveTracking {
     this.tipo,
     this.destino,
     this.destinoNombre,
+    this.paradas = const [],
     this.vehiculo,
     this.puntosRecientes = const [],
     this.inicioRecorrido,
@@ -194,12 +205,17 @@ class LiveTracking {
   final bool activo;
   final int? recorrido;
 
-  /// 'ENTREGA', 'RETIRO' o 'TRASLADO' (traslado entre sucursales, vía despacho).
+  /// 'ENTREGA', 'RETIRO', 'TRASLADO' (traslado entre sucursales, en circulación) o
+  /// 'EN_SUCURSAL' (despacho ya recepcionado, pieza parada ahí).
   final String? tipo;
   final LatLng? destino;
 
-  /// Nombre de la sucursal destino, solo cuando tipo == 'TRASLADO'.
+  /// Nombre de la sucursal destino, cuando tipo == 'TRASLADO' o 'EN_SUCURSAL'.
   final String? destinoNombre;
+
+  /// Todas las paradas del recorrido para esta pieza (normalmente 1; en gestión tipo 1 -retiro y
+  /// entrega el mismo día- puede traer 2: RETIRO y ENTREGA). Vacía fuera del circuito por recorrido.
+  final List<Parada> paradas;
   final VehiclePosition? vehiculo;
 
   /// Últimas lecturas GPS del cartero (de más vieja a más nueva, hasta 3), tal cual se subieron
@@ -214,6 +230,7 @@ class LiveTracking {
 
   bool get esRetiro => tipo == 'RETIRO';
   bool get esTraslado => tipo == 'TRASLADO';
+  bool get esEnSucursal => tipo == 'EN_SUCURSAL';
 
   factory LiveTracking.fromJson(Map<String, dynamic> j) {
     LatLng? pt(Object? o) => o is Map ? LatLng((o['lat'] as num).toDouble(), (o['lng'] as num).toDouble()) : null;
@@ -224,6 +241,10 @@ class LiveTracking {
       tipo: j['tipo'] as String?,
       destino: pt(j['destino']),
       destinoNombre: (j['destinoNombre'] as String?)?.trim(),
+      paradas: [
+        for (final p in (j['paradas'] as List? ?? []))
+          if (p is Map && pt(p) != null) Parada(tipo: (p['tipo'] as String?) ?? '', point: pt(p)!),
+      ],
       vehiculo: v is Map
           ? VehiclePosition(
               point: pt(v)!,

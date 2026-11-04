@@ -9,16 +9,9 @@ use PHPUnit\Framework\TestCase;
 
 final class TrackingTest extends TestCase
 {
-    public function testSoloLasPiezasEnDistribucionEstado2TienenSeguimiento(): void
-    {
-        $this->assertTrue(Tracking::enDistribucion(2));
-        foreach ([1, 13, 62, 82, null] as $otro) {
-            $this->assertFalse(Tracking::enDistribucion($otro));
-        }
-        // con otro estado ni siquiera se consulta la base: responde inactivo directamente
-        $this->assertSame(['activo' => false], Tracking::trackingOf(214031, 82, 'Pendiente de Retiro'));
-        $this->assertSame(['activo' => false], Tracking::trackingOf(212991, 13, 'Entregado'));
-    }
+    // `trackingOf()` ahora siempre consulta `ruteo` (recorrido abierto) antes de mirar el estado_id
+    // -ya no hay un gate que evite la consulta-, así que ya no se puede probar sin una DB real;
+    // queda cubierto por las pruebas manuales de lectura hechas al validar la lógica con datos reales.
 
     private static function detalle(): array
     {
