@@ -6,8 +6,11 @@ const R = ident(config.ruteoDb);
 const POS_TTL_MS = 15_000;
 const circuitCache = new TtlCache(2000);
 const recentCache = new TtlCache(2000);
-// La app del cartero captura una coordenada cada 20 s pero sube el lote una vez por minuto.
-const RECENT_TRAIL_MAX = 3;
+// La app del cartero captura una coordenada cada 20 s pero sube el lote una vez por minuto
+// (~3 puntos nuevos por subida). Se piden bastantes más de los 3 mínimos para mantener un colchón
+// de lecturas: así la animación nunca se queda sin tramos para encadenar aunque algún sondeo del
+// cliente se pierda, y la app arranca con más historial para una curva más fluida.
+const RECENT_TRAIL_MAX = 12;
 
 // ---------------------------------------------------------------------------
 // Lógica pura (con tests)
@@ -112,6 +115,26 @@ export async function recentPositions(carteroId) {
   });
 }
 
+/**
+ * true si, dentro del mismo recorrido, ninguna otra pieza con parada de ENTREGA todavía
+ * pendiente ("En distribución") tiene un orden_recorrido menor que miOrden: o sea, es la
+ * próxima que el cartero va a entregar. No mira retiros ni piezas ya resueltas.
+ */
+const proximaCache = new TtlCache(2000);
+async function esProximaEntrega(recorridoId, miOrden) {
+  return proximaCache.get(`p:${recorridoId}:${miOrden}`, 10_000, async () => {
+    const [row] = await query(
+      `SELECT MIN(d.orden_recorrido) AS mino
+       FROM ${R}.grupo_asignacion_pieza_detalle d
+       JOIN ${R}.piezas rp ON rp.id = d.pieza_id
+       JOIN flash_piezas p ON p.id = rp.pieza_id
+       WHERE d.grupo_asignacion_id = ? AND d.tipo = 'ENTREGA' AND p.estado_id = ?`,
+      [recorridoId, config.estadoEnDistribucion],
+    );
+    return row?.mino != null && Number(row.mino) === miOrden;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Circuito: flash_piezas.id -> ruteo.piezas.pieza_id -> ruteo.piezas.id -> asignacion.pieza_id
 //           -> asignacion.grupo_asignacion_id (= recorrido) -> grupo_asignacion.id (estado 0) -> id_cartero
@@ -167,6 +190,9 @@ export async function trackingOf(piezaId, { estadoId, estado = '' } = {}) {
   const stop = pickStop(detalle, estado);
   const pos = c.cartero ? await positionOf(c.cartero) : null;
 
+  const mio = detalle.find((d) => d.tipo === 'ENTREGA');
+  const miOrden = mio ? Number(mio.orden_recorrido) : null;
+
   return {
     activo: true,
     recorrido: c.recorrido,
@@ -174,5 +200,6 @@ export async function trackingOf(piezaId, { estadoId, estado = '' } = {}) {
     destino: stop ? { lat: stop.lat, lng: stop.lng } : null,
     vehiculo: describePosition(pos),
     puntosRecientes: c.cartero ? await recentPositions(c.cartero) : [],
+    proximaEntrega: miOrden != null ? await esProximaEntrega(c.recorrido, miOrden) : false,
   };
 }

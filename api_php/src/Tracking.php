@@ -9,8 +9,13 @@ final class Tracking
     private const POS_TTL_SECONDS = 15;
     private const CIRCUIT_TTL_SECONDS = 10;
 
-    /** La app del cartero captura una coordenada cada 20 s pero sube el lote una vez por minuto. */
-    private const RECENT_TRAIL_MAX = 3;
+    /**
+     * La app del cartero captura una coordenada cada 20 s pero sube el lote una vez por minuto
+     * (~3 puntos nuevos por subida). Se piden bastantes más de los 3 mínimos para mantener un
+     * colchón de lecturas: así la animación nunca se queda sin tramos para encadenar aunque algún
+     * sondeo del cliente se pierda, y la app arranca con más historial para una curva más fluida.
+     */
+    private const RECENT_TRAIL_MAX = 12;
 
     private static function cache(): TtlCache
     {
@@ -134,6 +139,28 @@ final class Tracking
     }
 
     /**
+     * true si, dentro del mismo recorrido, ninguna otra pieza con parada de ENTREGA todavía
+     * pendiente ("En distribución") tiene un orden_recorrido menor que $miOrden: o sea, es la
+     * próxima que el cartero va a entregar. No mira retiros ni piezas ya resueltas.
+     */
+    private static function esProximaEntrega(int $recorridoId, int $miOrden): bool
+    {
+        return self::cache()->get("prox:{$recorridoId}:{$miOrden}", self::CIRCUIT_TTL_SECONDS, static function () use ($recorridoId, $miOrden): bool {
+            $R = Db::ident(Config::get()->ruteoDb);
+            $rows = Db::query(
+                "SELECT MIN(d.orden_recorrido) AS mino
+                 FROM {$R}.grupo_asignacion_pieza_detalle d
+                 JOIN {$R}.piezas rp ON rp.id = d.pieza_id
+                 JOIN flash_piezas p ON p.id = rp.pieza_id
+                 WHERE d.grupo_asignacion_id = ? AND d.tipo = 'ENTREGA' AND p.estado_id = ?",
+                [$recorridoId, Config::get()->estadoEnDistribucion],
+            );
+            $mino = $rows[0]['mino'] ?? null;
+            return $mino !== null && (int) $mino === $miOrden;
+        });
+    }
+
+    /**
      * Circuito: flash_piezas.id -> ruteo.piezas.pieza_id -> ruteo.piezas.id -> asignacion.pieza_id
      *           -> asignacion.grupo_asignacion_id (= recorrido) -> grupo_asignacion.id (estado 0) -> id_cartero
      */
@@ -228,6 +255,14 @@ final class Tracking
         $cartero = $c['cartero'] !== null ? (int) $c['cartero'] : null;
         $pos = $cartero !== null ? self::positionOf($cartero) : null;
 
+        $miOrden = null;
+        foreach ($detalle as $d) {
+            if ($d['tipo'] === 'ENTREGA') {
+                $miOrden = (int) $d['orden_recorrido'];
+                break;
+            }
+        }
+
         return [
             'activo' => true,
             'recorrido' => $c['recorrido'],
@@ -236,6 +271,7 @@ final class Tracking
             'vehiculo' => self::describePosition($pos),
             'puntosRecientes' => $cartero !== null ? self::recentPositions($cartero) : [],
             'inicioRecorrido' => $cartero !== null ? Util::toIso(self::inicioRecorrido($cartero)) : null,
+            'proximaEntrega' => $miOrden !== null && self::esProximaEntrega($c['recorrido'], $miOrden),
         ];
     }
 }

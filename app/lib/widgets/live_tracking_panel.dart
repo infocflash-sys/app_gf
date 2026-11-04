@@ -89,10 +89,36 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
     final to = _to;
     if (to == null) return null;
     final from = _from ?? to;
-    final t = _anim.value; // lineal: el camión avanza sin frenar entre un punto y el siguiente
+    if (from == to) return to;
+    final t = _anim.value;
+
+    // Curva suave (Catmull-Rom) en vez de una recta dura entre dos lecturas: usa también el punto
+    // anterior a "from" y el siguiente después de "to" (ya en cola) como apoyo, para que la cadena
+    // A→B→C se sienta continua en las esquinas en vez de quebrar de golpe en cada GPS.
+    final n = _trail.length;
+    final p0 = n >= 3 ? _trail[n - 3] : from;
+    final p3 = _queue.isNotEmpty
+        ? _queue.first.point
+        : LatLng(to.latitude * 2 - from.latitude, to.longitude * 2 - from.longitude);
+    return _catmullRom(p0, from, to, p3, t);
+  }
+
+  /// Interpolación Catmull-Rom uniforme, componente a componente (lat/lng por separado alcanza
+  /// para distancias cortas entre lecturas GPS consecutivas).
+  static LatLng _catmullRom(LatLng p0, LatLng p1, LatLng p2, LatLng p3, double t) {
+    double seg(double a0, double a1, double a2, double a3) {
+      final t2 = t * t;
+      final t3 = t2 * t;
+      return 0.5 *
+          ((2 * a1) +
+              (-a0 + a2) * t +
+              (2 * a0 - 5 * a1 + 4 * a2 - a3) * t2 +
+              (-a0 + 3 * a1 - 3 * a2 + a3) * t3);
+    }
+
     return LatLng(
-      from.latitude + (to.latitude - from.latitude) * t,
-      from.longitude + (to.longitude - from.longitude) * t,
+      seg(p0.latitude, p1.latitude, p2.latitude, p3.latitude),
+      seg(p0.longitude, p1.longitude, p2.longitude, p3.longitude),
     );
   }
 
@@ -306,7 +332,22 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
                 },
               ),
             ),
-          Positioned(left: 12, right: 12, bottom: 12 + pad.bottom, child: _statusCard(context, d)),
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: 12 + pad.bottom,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (d?.activo == true && d?.proximaEntrega == true) ...[
+                  const _NextDeliveryBanner(),
+                  const SizedBox(height: 8),
+                ],
+                _statusCard(context, d),
+              ],
+            ),
+          ),
         ]),
       ),
     );
@@ -501,6 +542,39 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
               Text(subtitle, style: TextStyle(color: cs.onSurface.withValues(alpha: 0.65), fontSize: 12.5)),
               if (ago != null) ...[const SizedBox(height: 2), ago],
             ]),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Aviso de que, entre todas las piezas aún pendientes del recorrido, esta es la próxima a entregar.
+class _NextDeliveryBanner extends StatelessWidget {
+  const _NextDeliveryBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Brand.navy,
+      elevation: 6,
+      shadowColor: Colors.black45,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.16), shape: BoxShape.circle),
+            child: const Icon(LucideIcons.packageCheck, size: 18, color: Colors.white),
+          ),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'Tu pieza es la próxima en ser entregada',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13.5),
+            ),
           ),
         ]),
       ),

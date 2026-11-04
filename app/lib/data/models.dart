@@ -188,6 +188,7 @@ class LiveTracking {
     this.vehiculo,
     this.puntosRecientes = const [],
     this.inicioRecorrido,
+    this.proximaEntrega = false,
   });
   final bool activo;
   final int? recorrido;
@@ -203,6 +204,9 @@ class LiveTracking {
 
   /// Primer punto GPS del cartero hoy (hora en que salió "a la calle" con este recorrido).
   final DateTime? inicioRecorrido;
+
+  /// true si, de todas las piezas del recorrido aún no entregadas, esta es la de orden más bajo.
+  final bool proximaEntrega;
 
   bool get esRetiro => tipo == 'RETIRO';
 
@@ -226,6 +230,7 @@ class LiveTracking {
           if (p is Map && pt(p) != null) TrailPoint(point: pt(p)!, fecha: _date(p['fecha'])),
       ],
       inicioRecorrido: _date(j['inicioRecorrido']),
+      proximaEntrega: j['proximaEntrega'] == true,
     );
   }
 }
