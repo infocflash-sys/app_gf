@@ -185,6 +185,7 @@ class LiveTracking {
     this.recorrido,
     this.tipo,
     this.destino,
+    this.destinoNombre,
     this.vehiculo,
     this.puntosRecientes = const [],
     this.inicioRecorrido,
@@ -193,9 +194,12 @@ class LiveTracking {
   final bool activo;
   final int? recorrido;
 
-  /// 'ENTREGA' o 'RETIRO'.
+  /// 'ENTREGA', 'RETIRO' o 'TRASLADO' (traslado entre sucursales, vía despacho).
   final String? tipo;
   final LatLng? destino;
+
+  /// Nombre de la sucursal destino, solo cuando tipo == 'TRASLADO'.
+  final String? destinoNombre;
   final VehiclePosition? vehiculo;
 
   /// Últimas lecturas GPS del cartero (de más vieja a más nueva, hasta 3), tal cual se subieron
@@ -209,6 +213,7 @@ class LiveTracking {
   final bool proximaEntrega;
 
   bool get esRetiro => tipo == 'RETIRO';
+  bool get esTraslado => tipo == 'TRASLADO';
 
   factory LiveTracking.fromJson(Map<String, dynamic> j) {
     LatLng? pt(Object? o) => o is Map ? LatLng((o['lat'] as num).toDouble(), (o['lng'] as num).toDouble()) : null;
@@ -218,6 +223,7 @@ class LiveTracking {
       recorrido: j['recorrido'] as int?,
       tipo: j['tipo'] as String?,
       destino: pt(j['destino']),
+      destinoNombre: (j['destinoNombre'] as String?)?.trim(),
       vehiculo: v is Map
           ? VehiclePosition(
               point: pt(v)!,

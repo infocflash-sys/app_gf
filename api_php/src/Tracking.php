@@ -230,14 +230,77 @@ final class Tracking
     }
 
     /**
-     * Seguimiento de una pieza. Solo se busca la posición del móvil si se cumplen las dos condiciones:
-     *  1) la pieza está "En distribución", y
-     *  2) su recorrido está ABIERTO (ruteo.grupo_asignacion.estado = 0).
+     * Despacho abierto (sin recepcionar) que contiene esta pieza: traslado interno entre
+     * sucursales (novedades "Enviado a...", "En tránsito", etc.), distinto del recorrido de
+     * reparto al destinatario final. `transporte_id` es el id de cartero del transportista
+     * asignado (misma tabla `flash_sucursales_carteros`, misma `cartero_gps`).
+     */
+    private static function despachoAbiertoDe(int $piezaId): ?array
+    {
+        return self::cache()->get("desp:{$piezaId}", self::CIRCUIT_TTL_SECONDS, static function () use ($piezaId): ?array {
+            $rows = Db::query(
+                'SELECT d.id AS despacho_id, d.transporte_id, d.destino_id
+                 FROM flash_piezas_despacho_piezas dp
+                 JOIN flash_piezas_despacho d ON d.id = dp.despacho_id
+                 WHERE dp.pieza_id = ? AND d.fecha_recepcion IS NULL
+                 ORDER BY d.id DESC LIMIT 1',
+                [$piezaId],
+            );
+            return $rows[0] ?? null;
+        });
+    }
+
+    /** Coordenadas registradas de una sucursal (no todas las tienen cargadas). */
+    private static function coordenadasSucursal(int $sucursalId): ?array
+    {
+        return self::cache()->get("sucoord:{$sucursalId}", 300, static function () use ($sucursalId): ?array {
+            $rows = Db::query(
+                'SELECT s.nombre, c.latitud, c.longitud
+                 FROM flash_sucursales_coordenadas c
+                 JOIN flash_sucursales s ON s.id = c.sucursal_id
+                 WHERE c.sucursal_id = ? LIMIT 1',
+                [$sucursalId],
+            );
+            return $rows[0] ?? null;
+        });
+    }
+
+    /** Seguimiento de una pieza en traslado entre sucursales (vía despacho), no en reparto. */
+    private static function trackingPorDespacho(int $piezaId): array
+    {
+        $d = self::despachoAbiertoDe($piezaId);
+        if ($d === null) {
+            return ['activo' => false];
+        }
+        $cartero = $d['transporte_id'] !== null ? (int) $d['transporte_id'] : null;
+        $pos = $cartero !== null ? self::positionOf($cartero) : null;
+        $suc = $d['destino_id'] !== null ? self::coordenadasSucursal((int) $d['destino_id']) : null;
+
+        return [
+            'activo' => true,
+            'recorrido' => null,
+            'tipo' => 'TRASLADO',
+            'destino' => $suc !== null ? ['lat' => (float) $suc['latitud'], 'lng' => (float) $suc['longitud']] : null,
+            'destinoNombre' => $suc['nombre'] ?? null,
+            'vehiculo' => self::describePosition($pos),
+            'puntosRecientes' => $cartero !== null ? self::recentPositions($cartero) : [],
+            'inicioRecorrido' => $cartero !== null ? Util::toIso(self::inicioRecorrido($cartero)) : null,
+            'proximaEntrega' => false,
+        ];
+    }
+
+    /**
+     * Seguimiento de una pieza. Dos circuitos posibles:
+     *  1) "En distribución" con recorrido ABIERTO (ruteo.grupo_asignacion.estado = 0): reparto
+     *     al destinatario final.
+     *  2) Cualquier otro estado con un despacho ABIERTO (traslado entre sucursales, vía
+     *     flash_piezas_despacho): el vehículo es el transportista de ese despacho, no un cartero
+     *     de reparto, y el destino es la sucursal, no el domicilio.
      */
     public static function trackingOf(int $piezaId, ?int $estadoId, string $estado = ''): array
     {
         if (!self::enDistribucion($estadoId)) {
-            return ['activo' => false];
+            return self::trackingPorDespacho($piezaId);
         }
         $c = self::circuitOf($piezaId);
         if ($c === null) {

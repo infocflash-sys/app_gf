@@ -178,16 +178,24 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
           }
           // si ya había una posición, se deja la última conocida (puede estar "sin señal")
         } else if (_to == null) {
-          // primera vez: ubica directo en la lectura más nueva, sin animar.
-          final last = puntos.last;
-          _from = last.point;
-          _to = last.point;
-          _toFecha = last.fecha;
-          _queue.clear();
+          // primera vez: en vez de ubicar directo en la lectura más nueva y quedar estático hasta
+          // el próximo sondeo (~15 s de "mapa congelado" que se siente poco vivo), arranca desde
+          // unas lecturas atrás y encola el resto para animar la cadena ya mismo: se ve movimiento
+          // apenas se abre el mapa, en vez de esperar.
+          const catchUp = 6;
+          final window = puntos.length > catchUp ? puntos.sublist(puntos.length - catchUp) : puntos;
+          final start = window.first;
+          _from = start.point;
+          _to = start.point;
+          _toFecha = start.fecha;
           _anim.value = 1;
           _trail
             ..clear()
-            ..add(last.point);
+            ..add(start.point);
+          _queue.clear();
+          for (final p in window.skip(1)) {
+            _queue.add(_Waypoint(p.point, p.fecha));
+          }
         } else {
           // encola las lecturas realmente nuevas (posteriores a la última ya animada o en cola),
           // en el orden real en que se capturaron: la cadena A→B→C "rellena" el minuto entre una
@@ -417,7 +425,7 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
               child: GestureDetector(
                 behavior: HitTestBehavior.translucent,
                 onTap: () => _showDestinoInfo(context, d),
-                child: _DestinationMarker(retiro: d?.esRetiro ?? false),
+                child: _DestinationMarker(retiro: d?.esRetiro ?? false, traslado: d?.esTraslado ?? false),
               ),
             ),
           ]),
@@ -452,17 +460,21 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
   }
 
   void _showDestinoInfo(BuildContext context, LiveTracking? d) {
+    final traslado = d?.esTraslado ?? false;
+    final retiro = d?.esRetiro ?? false;
     showModalBottomSheet(
       context: context,
       backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => _InfoSheet(
-        title: (d?.esRetiro ?? false) ? 'Punto de retiro' : 'Punto de entrega',
-        icon: (d?.esRetiro ?? false) ? LucideIcons.packageOpen : LucideIcons.house,
-        rows: [
-          ('Destinatario', widget.destinatario?.isNotEmpty == true ? widget.destinatario! : 'Sin datos'),
-          ('Domicilio', widget.domicilio?.isNotEmpty == true ? widget.domicilio! : 'Sin datos'),
-        ],
+        title: traslado ? 'Sucursal de destino' : (retiro ? 'Punto de retiro' : 'Punto de entrega'),
+        icon: traslado ? LucideIcons.warehouse : (retiro ? LucideIcons.packageOpen : LucideIcons.house),
+        rows: traslado
+            ? [('Sucursal', d?.destinoNombre?.isNotEmpty == true ? d!.destinoNombre! : 'Sin datos')]
+            : [
+                ('Destinatario', widget.destinatario?.isNotEmpty == true ? widget.destinatario! : 'Sin datos'),
+                ('Domicilio', widget.domicilio?.isNotEmpty == true ? widget.domicilio! : 'Sin datos'),
+              ],
       ),
     );
   }
@@ -513,6 +525,12 @@ class _LiveTrackingPanelState extends State<LiveTrackingPanel>
       subtitle = 'Última ubicación conocida';
       icon = LucideIcons.satelliteDish;
       color = StatusColors.novedad;
+      ago = _AgoText(d.vehiculo!.fecha);
+    } else if (d.esTraslado) {
+      title = d.destinoNombre?.isNotEmpty == true
+          ? 'Tu pieza va camino a ${d.destinoNombre}'
+          : 'Tu pieza va camino a otra sucursal';
+      subtitle = 'Se actualiza sola cada pocos segundos';
       ago = _AgoText(d.vehiculo!.fecha);
     } else {
       title = d.esRetiro ? 'Vamos en camino a retirar tu pieza' : 'Tu pieza está en camino';
@@ -778,13 +796,15 @@ class _VehicleMarker extends StatelessWidget {
   }
 }
 
-/// Punto de entrega: pin con una casa (o una caja, si es un retiro).
+/// Punto de entrega: pin con una casa, una caja (retiro) o un depósito (traslado entre sucursales).
 class _DestinationMarker extends StatelessWidget {
-  const _DestinationMarker({required this.retiro});
+  const _DestinationMarker({required this.retiro, this.traslado = false});
   final bool retiro;
+  final bool traslado;
 
   @override
   Widget build(BuildContext context) {
+    final icon = traslado ? LucideIcons.warehouse : (retiro ? LucideIcons.packageOpen : LucideIcons.house);
     return Stack(alignment: Alignment.topCenter, children: [
       const Icon(Icons.location_on, size: 66, color: StatusColors.novedad, shadows: [
         Shadow(color: Colors.black45, blurRadius: 8, offset: Offset(0, 2)),
@@ -795,7 +815,7 @@ class _DestinationMarker extends StatelessWidget {
           width: 28,
           height: 28,
           decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.white),
-          child: Icon(retiro ? LucideIcons.packageOpen : LucideIcons.house, size: 17, color: StatusColors.novedad),
+          child: Icon(icon, size: 17, color: StatusColors.novedad),
         ),
       ),
     ]);

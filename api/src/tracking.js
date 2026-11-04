@@ -172,12 +172,71 @@ export async function liveIds(piezaIds) {
 export const enDistribucion = (estadoId) => Number(estadoId) === config.estadoEnDistribucion;
 
 /**
- * Seguimiento de una pieza. Solo se busca la posición del móvil si se cumplen las dos condiciones:
- *  1) la pieza está "En distribución", y
- *  2) su recorrido está ABIERTO (ruteo.grupo_asignacion.estado = 0).
+ * Despacho abierto (sin recepcionar) que contiene esta pieza: traslado interno entre sucursales
+ * (novedades "Enviado a...", "En tránsito", etc.), distinto del recorrido de reparto al
+ * destinatario final. `transporte_id` es el id de cartero del transportista asignado (misma
+ * tabla `flash_sucursales_carteros`, misma `cartero_gps`).
+ */
+const despachoCache = new TtlCache(2000);
+async function despachoAbiertoDe(piezaId) {
+  return despachoCache.get(`d:${piezaId}`, 10_000, async () => {
+    const [row] = await query(
+      `SELECT d.id AS despacho_id, d.transporte_id, d.destino_id
+       FROM flash_piezas_despacho_piezas dp
+       JOIN flash_piezas_despacho d ON d.id = dp.despacho_id
+       WHERE dp.pieza_id = ? AND d.fecha_recepcion IS NULL
+       ORDER BY d.id DESC LIMIT 1`,
+      [piezaId],
+    );
+    return row || null;
+  });
+}
+
+/** Coordenadas registradas de una sucursal (no todas las tienen cargadas). */
+const sucCoordCache = new TtlCache(2000);
+async function coordenadasSucursal(sucursalId) {
+  return sucCoordCache.get(`s:${sucursalId}`, 300_000, async () => {
+    const [row] = await query(
+      `SELECT s.nombre, c.latitud, c.longitud
+       FROM flash_sucursales_coordenadas c
+       JOIN flash_sucursales s ON s.id = c.sucursal_id
+       WHERE c.sucursal_id = ? LIMIT 1`,
+      [sucursalId],
+    );
+    return row || null;
+  });
+}
+
+/** Seguimiento de una pieza en traslado entre sucursales (vía despacho), no en reparto. */
+async function trackingPorDespacho(piezaId) {
+  const d = await despachoAbiertoDe(piezaId);
+  if (!d) return { activo: false };
+  const cartero = d.transporte_id ?? null;
+  const pos = cartero ? await positionOf(cartero) : null;
+  const suc = d.destino_id ? await coordenadasSucursal(d.destino_id) : null;
+
+  return {
+    activo: true,
+    recorrido: null,
+    tipo: 'TRASLADO',
+    destino: suc ? { lat: Number(suc.latitud), lng: Number(suc.longitud) } : null,
+    destinoNombre: suc?.nombre ?? null,
+    vehiculo: describePosition(pos),
+    puntosRecientes: cartero ? await recentPositions(cartero) : [],
+    proximaEntrega: false,
+  };
+}
+
+/**
+ * Seguimiento de una pieza. Dos circuitos posibles:
+ *  1) "En distribución" con recorrido ABIERTO (ruteo.grupo_asignacion.estado = 0): reparto al
+ *     destinatario final.
+ *  2) Cualquier otro estado con un despacho ABIERTO (traslado entre sucursales, vía
+ *     flash_piezas_despacho): el vehículo es el transportista de ese despacho, no un cartero de
+ *     reparto, y el destino es la sucursal, no el domicilio.
  */
 export async function trackingOf(piezaId, { estadoId, estado = '' } = {}) {
-  if (!enDistribucion(estadoId)) return { activo: false };
+  if (!enDistribucion(estadoId)) return trackingPorDespacho(piezaId);
   const c = await circuitOf(piezaId);
   if (!c) return { activo: false };
 
